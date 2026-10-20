@@ -22,27 +22,11 @@ Customer transactions need to become a consistent monthly statement: an opening 
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    Client[API client / Swagger] --> API[ASP.NET Core controllers]
-    API --> Pipeline[MediatR + FluentValidation]
-    Pipeline --> Handlers[Command and query handlers]
-    Handlers --> EF[EF Core persistence]
-    EF --> SQL[(SQL Server)]
-    Handlers --> Mail[IEmailService]
-    Mail --> Log[Development console logger]
-```
+![Architecture diagram](customer-architecture.svg)
 
-The request flow above shows runtime collaboration. Project dependencies keep infrastructure implementations outside the application layer:
+The request flow above shows runtime collaboration. Project references keep implementation details outside the domain: Api references Application and Infrastructure; Infrastructure references Application and Domain; Application references Domain.
 
-```mermaid
-flowchart TD
-    API[Api: HTTP, composition, errors, Swagger] --> Application[Application: CQRS, validation, DTOs, interfaces]
-    API --> Infrastructure[Infrastructure: EF Core, repositories, email]
-    Infrastructure --> Application
-    Application --> Domain[Domain: business entities]
-    Infrastructure --> Domain
-```
+
 
 | Project | Responsibility |
 | --- | --- |
@@ -150,3 +134,4 @@ The email service **logs messages; it does not send SMTP email**. Repeated gener
 ---
 
 [Hamza Naghnaghieh](https://github.com/HamzaDee) · **Full-Stack Software Engineer | 7 years**
+
