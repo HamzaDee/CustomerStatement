@@ -1,112 +1,68 @@
 # Customer Statement API
 
-A small ASP.NET Core Web API for generating and retrieving monthly customer account statements.
+**ASP.NET Core 8 · Clean Architecture · CQRS · MediatR · FluentValidation · EF Core · SQL Server**
 
-The system calculates monthly account balances from customer transactions, generates a statement for a requested month, associates the month's transactions with that statement, and sends the generated statement through an email service.
+A focused backend project for generating monthly customer account statements and retrieving statement history. It demonstrates how financial business rules, request validation, persistence, and delivery concerns can be separated in a maintainable .NET application.
 
-The API also supports retrieving customer statements by customer ID and optional statement-month range.
+## What it solves
 
-## Key Features
+Customer transactions need to become a consistent monthly statement: an opening balance, the month's debit and credit movements, and a closing balance. This API generates that statement, associates the matching transactions, and exposes the customer's statement history with optional month filters.
 
-- Generate monthly customer account statements
-- Calculate opening and closing balances
-- Associate transactions with generated statements
-- Retrieve statements by customer ID
-- Filter statements by month range
-- Prevent duplicate statements for the same customer and month
-- FluentValidation for request validation
-- Global exception handling
-- Swagger/OpenAPI documentation with request and response examples
-- Email service abstraction
-- SQL Server persistence using Entity Framework Core
+## Key features
+
+- Generate a monthly statement and carry forward the most recent earlier closing balance, or start at zero.
+- Calculate `closing balance = opening balance + credits - debits` using decimal amounts.
+- Return the existing statement ID for a repeated customer/month request.
+- Enforce one statement per customer/month with a unique database index.
+- Retrieve statements with customer information and transaction details, ordered by month.
+- Validate commands and queries through a shared MediatR pipeline.
+- Return structured validation and missing-resource errors.
+- Expose Swagger/OpenAPI documentation with request and response examples.
+- Route delivery through `IEmailService`; the included implementation logs the message for local development.
 
 ## Architecture
 
-The project follows **Clean Architecture** with a clear separation of responsibilities.
-
-```text
-CustomerStatement
-│
-├── CustomerStatement.Api
-│   └── Controllers, Swagger, Exception Handling
-│
-├── CustomerStatement.Application
-│   ├── CQRS Commands & Queries
-│   ├── MediatR Handlers
-│   ├── FluentValidation
-│   ├── DTOs
-│   └── Application Interfaces
-│
-├── CustomerStatement.Domain
-│   └── Domain Entities
-│
-└── CustomerStatement.Infrastructure
-    ├── Entity Framework Core
-    ├── SQL Server
-    ├── Repositories
-    ├── Email Service
-    └── Database Migrations
-
-    ## Project Structure
-
-```text
-CustomerStatement/
-│
-├── CustomerStatement.Api/
-│   ├── Controllers/
-│   ├── Exceptions/
-│   ├── Swagger/
-│   ├── Program.cs
-│   └── appsettings.json
-│
-├── CustomerStatement.Application/
-│   ├── Behaviors/
-│   ├── DTOs/
-│   ├── Features/
-│   │   └── Statements/
-│   │       ├── Commands/
-│   │       └── Queries/
-│   └── Interfaces/
-│
-├── CustomerStatement.Domain/
-│   └── Entities/
-│
-├── CustomerStatement.Infrastructure/
-│   ├── Data/
-│   ├── Migrations/
-│   ├── Repositories/
-│   └── Services/
-│
-├── CustomerStatement.sln
-├── .gitignore
-└── README.md
-
-## API Endpoints
-
-Base route:
-
-```text
-/api/Statements
-
-
-```markdown
-### Get Statements
-
-Retrieves customer account statements by customer ID.
-
-Optional month filters can be used to retrieve statements within a specific range.
-
-Example:
-
-```http
-GET /api/Statements?customerId=1&fromMonth=2026-01-01&toMonth=2026-06-01
+```mermaid
+flowchart LR
+    Client[API client / Swagger] --> API[ASP.NET Core controllers]
+    API --> Pipeline[MediatR + FluentValidation]
+    Pipeline --> Handlers[Command and query handlers]
+    Handlers --> EF[EF Core persistence]
+    EF --> SQL[(SQL Server)]
+    Handlers --> Mail[IEmailService]
+    Mail --> Log[Development console logger]
 ```
 
-### Generate Monthly Statement
+The request flow above shows runtime collaboration. Project dependencies keep infrastructure implementations outside the application layer:
 
-Generates a monthly account statement for a customer and sends it by email.
+```mermaid
+flowchart TD
+    API[Api: HTTP, composition, errors, Swagger] --> Application[Application: CQRS, validation, DTOs, interfaces]
+    API --> Infrastructure[Infrastructure: EF Core, repositories, email]
+    Infrastructure --> Application
+    Application --> Domain[Domain: business entities]
+    Infrastructure --> Domain
+```
 
-Example request:
+| Project | Responsibility |
+| --- | --- |
+| `CustomerStatement.Api` | HTTP endpoints, dependency injection, Swagger, exception handling |
+| `CustomerStatement.Application` | Commands, queries, handlers, validators, DTOs, persistence/delivery contracts |
+| `CustomerStatement.Domain` | `Customer`, `AccountStatement`, `StatementTransaction` |
+| `CustomerStatement.Infrastructure` | SQL Server DbContext, migrations, statement repository, development email service |
+
+## Technologies
+
+C# and .NET 8, ASP.NET Core Web API, EF Core 8 with SQL Server, MediatR, FluentValidation, and Swashbuckle/OpenAPI. Package versions are recorded in each project's `.csproj` file.
+
+## API endpoints
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/Statements?customerId={id}&fromMonth={date}&toMonth={date}` | Retrieve statements; month filters are optional and inclusive |
+| `POST` | `/api/Statements/generate` | Generate a monthly statement or return the existing statement ID |
+
+### Generate a statement
 
 ```http
 POST /api/Statements/generate
@@ -120,12 +76,7 @@ Content-Type: application/json
 }
 ```
 
-Example response:
-
-```http
-HTTP/1.1 200 OK
-Content-Type: application/json
-```
+Example `200 OK` response; the ID depends on your local database:
 
 ```json
 {
@@ -134,146 +85,68 @@ Content-Type: application/json
 }
 ```
 
-## GET Response
+### Retrieve statement history
 
-Example response:
-
-```json
-[
-  {
-    "id": 1,
-    "customerId": 1,
-    "customerName": "John Smith",
-    "customerEmail": "john.smith@example.com",
-    "statementMonth": "2026-01-01",
-    "openingBalance": 1000.00,
-    "closingBalance": 1250.00,
-    "generatedAt": "2026-01-31T10:00:00",
-    "transactions": [
-      {
-        "id": 1,
-        "transactionDate": "2026-01-05",
-        "description": "Salary",
-        "debit": 0.00,
-        "credit": 500.00
-      },
-      {
-        "id": 2,
-        "transactionDate": "2026-01-10",
-        "description": "Online Purchase",
-        "debit": 100.00,
-        "credit": 0.00
-      }
-    ]
-  }
-]
+```http
+GET /api/Statements?customerId=1&fromMonth=2026-01-01&toMonth=2026-06-01
 ```
 
-## Database Setup
+The response is an array containing statement IDs, customer details, statement months, opening/closing balances, generation timestamps, and transaction details. A query with no matching statements returns an empty array.
 
-The application uses **SQL Server** with **Entity Framework Core**.
+### Validation and errors
 
-### Connection String
+- `customerId` must be positive.
+- Statement months and supplied month filters must use the first day of the month.
+- `fromMonth` must be earlier than or equal to `toMonth`.
+- Validation failures return `400` with `ValidationProblemDetails`.
+- Generating a statement for a missing customer returns `404` with `ProblemDetails`.
 
-The database connection string is stored using **ASP.NET Core User Secrets** and is not committed to source control.
+## Run locally
 
-### Apply Migrations
-
-From the solution directory, run:
+Prerequisites: **.NET 8 SDK**, a local SQL Server/SQL Server Express instance, and the EF Core CLI 8.x.
 
 ```powershell
+git clone https://github.com/HamzaDee/CustomerStatement.git
+cd CustomerStatement
+dotnet restore
+```
+
+Configure your local connection using the project's existing User Secrets configuration:
+
+```powershell
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=(localdb)\MSSQLLocalDB;Database=CustomerStatementDb;Trusted_Connection=True;TrustServerCertificate=True" --project CustomerStatement.Api
+```
+
+This example uses Windows LocalDB for local development. Replace the server/authentication settings when using another SQL Server instance.
+
+```powershell
+# Only if dotnet-ef is not installed:
+dotnet tool install --global dotnet-ef --version "8.*"
+
 dotnet ef database update --project CustomerStatement.Infrastructure --startup-project CustomerStatement.Api
+dotnet build
+dotnet run --project CustomerStatement.Api --launch-profile https
 ```
 
-This creates or updates the `CustomerStatementDb` database using the Entity Framework Core migrations included in the Infrastructure project.
+Open **https://localhost:7084/swagger**. This launch profile runs in Development, where Swagger is enabled. If needed, trust your local development certificate with `dotnet dev-certs https --trust`.
 
-## How to Run
+Migrations create the schema; they do not seed customers or transactions. Add synthetic records to your local database before generating a statement. Customer and transaction creation endpoints are outside the current scope.
 
-### Prerequisites
+## Architecture decisions
 
-- .NET 8 SDK
-- SQL Server
-- Visual Studio 2022 or Visual Studio Code
+| Decision | Reason and tradeoff |
+| --- | --- |
+| Separate commands and queries | Generation rules and read projections evolve independently; both currently use one database. |
+| MediatR validation behavior | Keep validation consistent without repeating it in controllers. |
+| Persistence behind application contracts | Infrastructure implements the contracts; the command-side DbContext interface still exposes EF Core types. |
+| No-tracking statement queries | Load related customer/transaction data without tracking changes. |
+| Decimal amounts and a unique customer/month index | Preserve currency precision and enforce the monthly boundary in the database. |
+| Delivery abstraction | Replace console logging with an email provider without embedding provider details in handlers. |
 
-### Steps
+## Current boundaries
 
-1. Clone the repository.
-2. Configure the database connection using ASP.NET Core User Secrets.
-3. Apply the Entity Framework Core migrations.
-4. Build the solution.
-5. Run the API project.
+The email service **logs messages; it does not send SMTP email**. Repeated generation returns the existing ID without regenerating or resending the statement. Persistence completes before delivery, so a production workflow would benefit from an outbox and retries. Concurrent insert conflicts are protected by the unique index but do not have a dedicated API response mapping. Authentication, automated tests, and transaction ingestion are areas for further development.
 
-The Swagger UI will be available when the application starts.
+---
 
-## Validation and Error Handling
-
-The API uses **FluentValidation** with a MediatR pipeline behavior to validate incoming commands and queries before they reach their handlers.
-
-Validation includes:
-
-- Customer ID must be greater than zero.
-- Statement months must use the first day of the month.
-- The `FromMonth` filter must be less than or equal to `ToMonth`.
-
-The API also uses a global exception handler to return consistent HTTP responses.
-
-### Example Validation Response
-
-```json
-{
-  "type": "https://tools.ietf.org/html/rfc9110",
-  "title": "Validation failed.",
-  "status": 400,
-  "errors": {
-    "CustomerId": [
-      "CustomerId must be greater than 0."
-    ]
-  }
-}
-```
-
-### Example Not Found Response
-
-```json
-{
-  "title": "Resource not found.",
-  "status": 404,
-  "detail": "Customer not found."
-}
-```
-
-## Email Service
-
-The application uses an `IEmailService` abstraction so that email delivery is separated from the application/business logic.
-
-The current implementation is a simple development implementation that writes the generated email to the console instead of sending through a real SMTP provider.
-
-This allows the application to demonstrate the email workflow without requiring external email credentials.
-
-### Email Flow
-
-```text
-GenerateMonthlyStatementCommand
-            |
-            v
-GenerateMonthlyStatementCommandHandler
-            |
-            +-- Generate statement
-            |
-            +-- Calculate balances
-            |
-            +-- Associate transactions
-            |
-            +-- Save statement
-            |
-            v
-       IEmailService
-            |
-            v
-       EmailService
-            |
-            v
-      Console Output
-```
-
-For a production environment, `IEmailService` could be replaced with an implementation using SMTP, SendGrid, Amazon SES, or another email provider without changing the application/business logic.
+[Hamza Naghnaghieh](https://github.com/HamzaDee) · **Full-Stack Software Engineer | 7 years**
